@@ -1,121 +1,93 @@
-const TelegramBot = require("node-telegram-bot-api");
-const puppeteer = require("puppeteer");
+const TelegramBot = require('node-telegram-bot-api');
+const puppeteer = require('puppeteer');
+const fs = require('fs');
+const path = require('path');
 
-const TOKEN = process.env.BOT_TOKEN;
+// Pull the token from Railway Environment Variables
+const token = process.env.BOT_TOKEN;
 
-if (!TOKEN) {
-  console.error("BOT_TOKEN variable not found");
-  process.exit(1);
+if (!token) {
+    console.error("ERROR: BOT_TOKEN environment variable is missing.");
+    process.exit(1);
 }
 
-const bot = new TelegramBot(TOKEN, {
-  polling: true
-});
+// Initialize the bot
+const bot = new TelegramBot(token, { polling: true });
 
-const waitingUsers = new Set();
+// Attempt to load cookies.json securely
+let cookies;
+try {
+    cookies = require('./cookies.json');
+} catch (error) {
+    console.error("ERROR: cookies.json file not found or invalid format.");
+}
 
+// Listen for /start command
 bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
+    const chatId = msg.chat.id;
 
-  waitingUsers.add(chatId);
-
-  await bot.sendMessage(
-    chatId,
-    "Type which number you want to send.\n\nExample:\n1234"
-  );
-});
-
-bot.on("message", async (msg) => {
-  const chatId = msg.chat.id;
-
-  if (!msg.text) return;
-  if (msg.text === "/start") return;
-  if (!waitingUsers.has(chatId)) return;
-
-  waitingUsers.delete(chatId);
-
-  const number = msg.text.trim();
-
-  let browser;
-
-  try {
-    await bot.sendMessage(
-      chatId,
-      `Processing number: ${number}`
-    );
-
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage"
-      ]
-    });
-
-    const page = await browser.newPage();
-
-    await page.setViewport({
-      width: 1280,
-      height: 720
-    });
-
-    await page.goto(
-      "https://vipcentre.site/checkdemo.php",
-      {
-        waitUntil: "networkidle2",
-        timeout: 60000
-      }
-    );
-
-    await page.waitForSelector("#phone_number");
-
-    await page.type("#phone_number", number, {
-      delay: 100
-    });
-
-    // Screenshot before submit
-    const beforeSubmit = await page.screenshot({
-      fullPage: true
-    });
-
-    await bot.sendPhoto(chatId, beforeSubmit, {
-      caption: `Number entered: ${number}`
-    });
-
-    await page.click(
-      'button[type="submit"], input[type="submit"], button'
-    );
-
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    // Screenshot after submit
-    const afterSubmit = await page.screenshot({
-      fullPage: true
-    });
-
-    await bot.sendPhoto(chatId, afterSubmit, {
-      caption: `After submit: ${number}`
-    });
-
-    await bot.sendMessage(
-      chatId,
-      "Task completed successfully."
-    );
-
-    await browser.close();
-  } catch (err) {
-    console.error(err);
-
-    if (browser) {
-      await browser.close();
+    if (!cookies) {
+        return bot.sendMessage(chatId, "❌ Cannot proceed: `cookies.json` is missing or invalid on the server.", { parse_mode: "Markdown" });
     }
 
-    await bot.sendMessage(
-      chatId,
-      `Error:\n${err.message}`
-    );
-  }
+    // Send an initial processing message
+    const processingMsg = await bot.sendMessage(chatId, "🔄 Checking cookies and generating screenshot. Please wait...");
+
+    let browser;
+    const screenshotPath = path.join(__dirname, 'test.png');
+
+    try {
+        // Launch Puppeteer with args required for Railway containers
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox', 
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage'
+            ]
+        });
+
+        const page = await browser.newPage();
+
+        // Navigate to the domain first to establish the origin
+        await page.goto("https://accounts.atxp.ai");
+
+        // Inject the cookies
+        await page.setCookie(...cookies);
+
+        // Reload with cookies applied
+        await page.goto("https://accounts.atxp.ai", {
+            waitUntil: "networkidle2"
+        });
+
+        const pageTitle = await page.title();
+        console.log(`Successfully loaded: ${pageTitle}`);
+
+        // Take the screenshot
+        await page.screenshot({
+            path: screenshotPath,
+            fullPage: true
+        });
+
+        // Send the screenshot to the user
+        await bot.sendPhoto(chatId, screenshotPath, {
+            caption: `✅ **Screenshot Captured!**\n**Page Title:** ${pageTitle}`,
+            parse_mode: "Markdown"
+        });
+
+    } catch (error) {
+        console.error("Puppeteer Error:", error);
+        bot.sendMessage(chatId, `❌ **An error occurred:**\n\`${error.message}\``, { parse_mode: "Markdown" });
+    } finally {
+        // Cleanup: Close browser and delete the image to free up Railway container space
+        if (browser) await browser.close();
+        if (fs.existsSync(screenshotPath)) {
+            fs.unlinkSync(screenshotPath);
+        }
+        
+        // Delete the "processing" message
+        bot.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
+    }
 });
 
-console.log("Bot is running...");
+console.log("Bot is online and polling...");
