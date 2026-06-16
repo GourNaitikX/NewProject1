@@ -1,12 +1,13 @@
 {
-  "name": "telegram-puppeteer-bot",
+  "name": "cookie-screenshot-bot",
   "version": "1.0.0",
+  "description": "Telegram bot to check cookies and take a screenshot via Puppeteer",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
-    "puppeteer": "^24.10.2"
+    "puppeteer": "^22.0.0"
   }
 }
