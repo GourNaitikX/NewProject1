@@ -26,7 +26,7 @@ try {
     console.error("ERROR: cookies.json file not found or invalid format.");
 }
 
-// Listen for /start command
+// The 'async' keyword is required here to use 'await' inside the function
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
 
@@ -59,19 +59,60 @@ bot.onText(/\/start/, async (msg) => {
         // 2. Set a standard desktop screen resolution
         await page.setViewport({ width: 1920, height: 1080 });
 
-        // 3. Establish origin
+        // 3. Establish origin domain
         await page.goto("https://accounts.atxp.ai");
 
         // 4. Inject Cookies
         await page.setCookie(...cookies);
 
-        // Optional Local Storage Injection: 
-        // If the site still fails, uncomment the block below and add your Privy token data
-        /*
-        await page.evaluate(() => {
-            localStorage.setItem('privy:token', 'YOUR_TOKEN_VALUE_HERE');
+        // 5. Reload the page with the active session applied
+        await page.goto("https://accounts.atxp.ai", {
+            waitUntil: "networkidle2"
         });
-        */
+
+        // 6. Give the frontend UI 3 seconds to fully process the login state
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const pageTitle = await page.title();
+        console.log(`Successfully loaded: ${pageTitle}`);
+
+        // Take the full page screenshot
+        await page.screenshot({
+            path: screenshotPath,
+            fullPage: true
+        });
+
+        // Send the screenshot to the Telegram user
+        await bot.sendPhoto(chatId, screenshotPath, {
+            caption: `✅ **Screenshot Captured!**\n**Page Title:** ${pageTitle}`,
+            parse_mode: "Markdown"
+        });
+
+    } catch (error) {
+        console.error("Puppeteer Error:", error);
+        bot.sendMessage(chatId, `❌ **An error occurred:**\n\`${error.message}\``, { parse_mode: "Markdown" });
+    } finally {
+        // Cleanup resources to prevent memory leaks on Railway
+        if (browser) await browser.close();
+        if (fs.existsSync(screenshotPath)) {
+            fs.unlinkSync(screenshotPath);
+        }
+        
+        // Remove the "processing" message
+        bot.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
+    }
+});
+
+console.log("Bot is online and polling...");
+        
+        // 2. Set a standard desktop screen resolution
+        await page.setViewport({ width: 1920, height: 1080 });
+
+        // 3. Establish origin
+        await page.goto("https://accounts.atxp.ai");
+
+        // 4. Inject Cookies
+        await page.setCookie(...cookies);
 
         // 5. Reload the page with session applied
         await page.goto("https://accounts.atxp.ai", {
@@ -106,63 +147,6 @@ bot.onText(/\/start/, async (msg) => {
             fs.unlinkSync(screenshotPath);
         }
         
-        bot.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
-    }
-});
-
-console.log("Bot is online and polling...");
-    const screenshotPath = path.join(__dirname, 'test.png');
-
-    try {
-        // Launch Puppeteer with args required for Railway containers
-        browser = await puppeteer.launch({
-            headless: true,
-            args: [
-                '--no-sandbox', 
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage'
-            ]
-        });
-
-        const page = await browser.newPage();
-
-        // Navigate to the domain first to establish the origin
-        await page.goto("https://accounts.atxp.ai");
-
-        // Inject the cookies
-        await page.setCookie(...cookies);
-
-        // Reload with cookies applied
-        await page.goto("https://accounts.atxp.ai", {
-            waitUntil: "networkidle2"
-        });
-
-        const pageTitle = await page.title();
-        console.log(`Successfully loaded: ${pageTitle}`);
-
-        // Take the screenshot
-        await page.screenshot({
-            path: screenshotPath,
-            fullPage: true
-        });
-
-        // Send the screenshot to the user
-        await bot.sendPhoto(chatId, screenshotPath, {
-            caption: `✅ **Screenshot Captured!**\n**Page Title:** ${pageTitle}`,
-            parse_mode: "Markdown"
-        });
-
-    } catch (error) {
-        console.error("Puppeteer Error:", error);
-        bot.sendMessage(chatId, `❌ **An error occurred:**\n\`${error.message}\``, { parse_mode: "Markdown" });
-    } finally {
-        // Cleanup: Close browser and delete the image to free up Railway container space
-        if (browser) await browser.close();
-        if (fs.existsSync(screenshotPath)) {
-            fs.unlinkSync(screenshotPath);
-        }
-        
-        // Delete the "processing" message
         bot.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
     }
 });
